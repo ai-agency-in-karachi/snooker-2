@@ -1,0 +1,240 @@
+import { memo } from 'react'
+import { motion } from 'framer-motion'
+import { Flag, Pause, Play, Plus, Receipt, Square } from 'lucide-react'
+import { formatClock, formatMoney, formatPricing } from '@shared/format'
+import { cn } from '@/lib/cn'
+import type { ActiveSession, TableOverview } from '@/lib/types'
+import { byPlayer, canSplitGames, currentGame } from '@/lib/tableGames'
+import { useBillingPolicy, useServerNow } from '@/data/hooks'
+import { Button } from '@/components/ui/Button'
+import { statusMeta, timeUpMeta, useLive } from './session'
+
+/** The cushion rail along a card's top edge, in the table's state colour. */
+const RAIL: Record<keyof typeof statusMeta, string | null> = {
+  available: null,
+  running: 'var(--color-baize-500)',
+  paused: 'var(--color-brass-400)',
+  billing: 'var(--color-brass-600)',
+  completed: null,
+  cancelled: null,
+  voided: null
+}
+
+export function StatusPill({ status, timeUp = false }: { status: keyof typeof statusMeta; timeUp?: boolean }) {
+  const m = timeUp ? timeUpMeta : statusMeta[status]
+  return (
+    <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide', m.pill)}>
+      <span className={cn('size-1.5 rounded-full', status === 'billing' ? 'bg-surface/80' : m.dot)} />
+      {m.label}
+    </span>
+  )
+}
+
+interface Props {
+  table: TableOverview
+  onOpen: (table: TableOverview) => void
+  onStart: (table: TableOverview) => void
+  onCheckout: (table: TableOverview) => void
+  onPause: (sessionId: string) => void
+  onResume: (sessionId: string) => void
+  onEnd: (table: TableOverview) => void
+  /** A used-up per-minute booking: keep playing (extra time billed from now). */
+  onContinue: (sessionId: string) => void
+  /** A table priced by the hour: add 30 minutes (the whole time is re-priced). */
+  onExtend: (sessionId: string, fromBookedSeconds: number) => void
+  /** Open play: the game in play goes to a player ("Off / On"); the table keeps running. */
+  onOffOn: (table: TableOverview) => void
+  busy: boolean
+}
+
+/**
+ * One table on the floor, set in type alone: the category and floor in small
+ * monospaced capitals, the table's name in the display face, and the live
+ * clock — monospaced like a scoreboard, so its digits hold still — with the
+ * charge as the largest figures. Tables in play are lifted off the page; free
+ * tables sit lighter and quieter, so the floor reads at a glance. No artwork —
+ * the same card serves snooker, pool, table tennis and consoles.
+ */
+export const TableCard = memo(function TableCard({ table, onOpen, onStart, onCheckout, onPause, onResume, onEnd, onContinue, onExtend, onOffOn, busy }: Props) {
+  const session = table.session
+  const status = session?.status ?? 'available'
+  const live = useLive(session)
+  const timeUp = live?.timeUp ?? false
+  const meta = timeUp ? timeUpMeta : statusMeta[status]
+  // Bookings count down and stop at 0:00; open play (and play continued past a
+  // booking) counts up. Nothing ever shows negative time.
+  const countdown = live?.remaining != null && live.extraSeconds === null && status !== 'billing'
+  const bookedProgress =
+    live && session?.booked_seconds ? Math.min(1, live.seconds / session.booked_seconds) : null
+  // A booking still in play is charged for the time played so far (ending early pays only that).
+  const bookingInPlay = countdown && !timeUp && session?.booked_amount != null
+  const splittable = Boolean(session && canSplitGames(session))
+
+  return (
+    <motion.article
+      whileHover={{ y: -3 }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+      className={cn(
+        'relative flex min-h-[220px] cursor-pointer flex-col rounded-[var(--radius-card)] p-5 transition-[background-color,box-shadow,border-color] duration-200 sm:min-h-[256px] sm:p-6',
+        session
+          ? 'rail bg-surface shadow-[0_0_0_1px_rgb(10_31_20/0.045),var(--shadow-card)] hover:shadow-[0_0_0_1px_rgb(10_31_20/0.06),var(--shadow-raised)]'
+          : 'border border-dashed border-forest-950/[0.13] bg-surface/45 hover:border-solid hover:border-forest-950/[0.08] hover:bg-surface hover:shadow-[var(--shadow-card)]',
+        timeUp && 'ring-2 ring-claret-500/45'
+      )}
+      style={session ? ({ '--rail': timeUp ? 'var(--color-claret-500)' : RAIL[status] } as React.CSSProperties) : undefined}
+      onClick={() => (session ? onOpen(table) : onStart(table))}
+      data-testid={`table-card-${table.name}`}
+    >
+      <header>
+        <div className="flex items-center justify-between gap-3">
+          <p className="min-w-0 truncate font-mono text-[10.5px] font-medium tracking-[0.12em] text-fg-4 uppercase">
+            {table.category_name}
+            <span className="mx-1.5 text-fg-5">·</span>
+            {table.floor_name}
+          </p>
+          <StatusPill status={status} timeUp={timeUp} />
+        </div>
+        <h3 className="mt-4 truncate font-display-tight text-[28px] leading-[1.05] text-forest-950">{table.name}</h3>
+        <p className="mt-1.5 text-[13px] font-medium text-fg-3 tabular">{formatPricing(session ?? table)}</p>
+      </header>
+
+      <div className="mt-auto pt-5 sm:pt-7">
+        {session && live ? (
+          <>
+            <div className="flex items-end justify-between gap-3">
+              <span className={cn('timer text-[38px] leading-[0.9] sm:text-[42px]', meta.text)} data-testid="table-timer">
+                {countdown ? formatClock(live.remaining!) : formatClock(live.seconds)}
+              </span>
+              <span className="text-right">
+                <span className="block figure text-[19px] leading-tight text-forest-950">{formatMoney(live.total)}</span>
+                <span className="block text-[11px] font-medium text-fg-4" data-testid="table-charge-note">
+                  {live.itemsCount > 0
+                    ? `incl. ${live.itemsCount} item${live.itemsCount > 1 ? 's' : ''}`
+                    : bookingInPlay
+                      ? `so far · ${formatMoney(session.booked_amount!)} booked`
+                      : 'table charge'}
+                </span>
+              </span>
+            </div>
+            {bookedProgress !== null && (
+              <div className="mt-4">
+                <div className="h-[3px] overflow-hidden rounded-full bg-forest-950/[0.07]">
+                  <div
+                    className={cn('h-full rounded-full transition-[width] duration-1000', timeUp ? 'bg-claret-500' : status === 'paused' ? 'bg-brass-400' : status === 'billing' ? 'bg-brass-600' : 'bg-baize-500')}
+                    style={{ width: `${bookedProgress * 100}%` }}
+                  />
+                </div>
+                <p className={cn('mt-2 text-[11px] font-semibold', timeUp ? 'text-claret-600' : 'text-fg-4')} data-testid="booking-status">
+                  {timeUp
+                    ? "Time's up · billing stopped at the booked amount"
+                    : live.extraSeconds !== null
+                      ? `Booking complete · +${formatClock(live.extraSeconds)} extra, billed per minute`
+                      : status === 'billing'
+                        ? 'Booking'
+                        : `left of ${formatClock(session.booked_seconds!)} booked · ${formatClock(live.seconds)} played`}
+                </p>
+              </div>
+            )}
+            {session.games && session.games.length > 0 && <GamesSummary session={session} />}
+          </>
+        ) : (
+          <p className="text-[15px] font-medium text-fg-4">Ready to play</p>
+        )}
+
+        <div className="mt-5 flex gap-2" onClick={(e) => e.stopPropagation()}>
+          {!session && (
+            <Button variant="primary" className="flex-1" icon={<Play className="size-4" />} onClick={() => onStart(table)}>
+              Start
+            </Button>
+          )}
+          {timeUp && (
+            <>
+              {session!.pricing_mode === 'hourly_special30' ? (
+                <Button variant="secondary" className="flex-1" icon={<Plus className="size-4" />} disabled={busy} onClick={() => onExtend(session!.id, session!.booked_seconds!)} data-testid="table-extend">
+                  30 min
+                </Button>
+              ) : (
+                <Button variant="secondary" className="flex-1" icon={<Play className="size-4" />} disabled={busy} onClick={() => onContinue(session!.id)} data-testid="table-continue">
+                  Continue
+                </Button>
+              )}
+              <Button variant="primary" className="flex-1" icon={<Square className="size-3.5" />} disabled={busy} onClick={() => onEnd(table)}>
+                End
+              </Button>
+            </>
+          )}
+          {status === 'running' && !timeUp && (
+            <>
+              <Button variant="secondary" className="flex-1" icon={<Pause className="size-4" />} disabled={busy} onClick={() => onPause(session!.id)}>
+                Pause
+              </Button>
+              {splittable && (
+                <Button variant="secondary" className="flex-1" icon={<Flag className="size-3.5" />} disabled={busy} onClick={() => onOffOn(table)} data-testid="table-offon">
+                  Off / On
+                </Button>
+              )}
+              <Button variant="secondary" aria-label="Add items" icon={<Plus className="size-4" />} onClick={() => onOpen(table)} />
+              <Button variant="primary" className="flex-1" icon={<Square className="size-3.5" />} disabled={busy} onClick={() => onEnd(table)}>
+                End
+              </Button>
+            </>
+          )}
+          {status === 'paused' && !timeUp && (
+            <>
+              <Button variant="primary" className="flex-1" icon={<Play className="size-4" />} disabled={busy} onClick={() => onResume(session!.id)}>
+                Resume
+              </Button>
+              {splittable && (
+                <Button variant="secondary" className="flex-1" icon={<Flag className="size-3.5" />} disabled={busy} onClick={() => onOffOn(table)} data-testid="table-offon">
+                  Off / On
+                </Button>
+              )}
+              <Button variant="secondary" className="flex-1" icon={<Square className="size-3.5" />} disabled={busy} onClick={() => onEnd(table)}>
+                End
+              </Button>
+            </>
+          )}
+          {status === 'billing' && (
+            <Button variant="brass" className="flex-1" icon={<Receipt className="size-4" />} onClick={() => onCheckout(table)}>
+              Checkout · {formatMoney(live?.total ?? 0)}
+            </Button>
+          )}
+        </div>
+      </div>
+    </motion.article>
+  )
+})
+
+/**
+ * The games on a table so far, by player: how many each has lost and what
+ * they owe for them (unpaid until checkout), with the game in play.
+ */
+function GamesSummary({ session }: { session: ActiveSession }) {
+  const now = useServerNow()
+  const policy = useBillingPolicy()
+  const rows = byPlayer(session.games)
+  const game = policy && session.status !== 'billing' ? currentGame(session, now, policy) : null
+  return (
+    <div className="mt-4 border-t border-line pt-3" data-testid="games-summary">
+      {game && (
+        <p className="mb-1.5 text-[11px] font-semibold text-fg-4 tabular" data-testid="game-in-play">
+          Game {game.number} in play · {formatClock(game.seconds)} · {formatMoney(game.amount)}
+        </p>
+      )}
+      <ul className="space-y-1">
+        {rows.slice(0, 4).map((r) => (
+          <li key={r.name} className="flex items-baseline justify-between gap-3 text-[12.5px]" data-testid={`games-player-${r.name}`}>
+            <span className="min-w-0 truncate font-semibold text-fg-2">
+              {r.name}
+              <span className="ml-1.5 font-medium text-fg-4">
+                · {r.games} game{r.games === 1 ? '' : 's'}
+              </span>
+            </span>
+            <span className="shrink-0 font-semibold text-forest-950 tabular">{formatMoney(r.paisa / 100)}</span>
+          </li>
+        ))}
+      </ul>
+      {rows.length > 4 && <p className="mt-1 text-[11px] font-medium text-fg-4">+ {rows.length - 4} more players</p>}
+    </div>
+  )
+}

@@ -1,0 +1,243 @@
+import type { ReactNode } from 'react'
+import { motion } from 'framer-motion'
+import { ArrowDown, ArrowUp, CloudOff, Loader2 } from 'lucide-react'
+import { useSync } from '@/offline/sync'
+import { cn } from '@/lib/cn'
+
+/**
+ * Change against a real earlier figure (never invented): a small pill with an
+ * arrow — baize green going up, claret going down — and an optional quiet
+ * "vs …" after it.
+ */
+export function Delta({
+  change,
+  against,
+  tone = 'light',
+  className
+}: {
+  /** Fractional change, e.g. 0.124 for +12.4%. */
+  change: number
+  against?: ReactNode
+  tone?: 'light' | 'dark'
+  className?: string
+}) {
+  const up = change >= 0
+  const pct = Math.abs(change * 100)
+  const shown = pct >= 100 ? Math.round(pct).toLocaleString('en-GB') : pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10
+  const dark = tone === 'dark'
+  return (
+    <span className={cn('inline-flex items-center gap-2', className)} data-testid="delta">
+      <span
+        className={cn(
+          'inline-flex items-center gap-[3px] rounded-full py-[3px] pr-2 pl-1.5 text-[12px] leading-none font-semibold tabular',
+          up
+            ? dark
+              ? 'bg-baize-400/[0.16] text-baize-200'
+              : 'bg-baize-50 text-baize-700'
+            : dark
+              ? 'bg-claret-400/[0.18] text-claret-200'
+              : 'bg-claret-50 text-claret-700'
+        )}
+      >
+        {up ? <ArrowUp className="size-3" strokeWidth={2.75} /> : <ArrowDown className="size-3" strokeWidth={2.75} />}
+        {shown}%
+      </span>
+      {against && <span className={cn('text-[12.5px]', dark ? 'text-side-muted' : 'text-fg-4')}>{against}</span>}
+    </span>
+  )
+}
+
+export function Spinner({ className }: { className?: string }) {
+  return <Loader2 className={cn('size-5 animate-spin text-fg-3', className)} />
+}
+
+export function LoadingBlock({ label = 'Loading…', className }: { label?: string; className?: string }) {
+  // Offline, nothing saved on this device to show: say so instead of spinning.
+  const { online } = useSync()
+  if (!online) {
+    return (
+      <div className={cn('flex items-center justify-center gap-3 py-16 text-sm text-fg-3', className)} data-testid="offline-block">
+        <CloudOff className="size-4 text-brass-600" /> You're offline. This loads when the connection is back.
+      </div>
+    )
+  }
+  return (
+    <div className={cn('flex items-center justify-center gap-3 py-16 text-sm text-fg-3', className)}>
+      <Spinner /> {label}
+    </div>
+  )
+}
+
+export function Skeleton({ className }: { className?: string }) {
+  return <div className={cn('animate-pulse rounded-lg bg-forest-950/[0.045]', className)} />
+}
+
+export function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+  className
+}: {
+  icon?: ReactNode
+  title: string
+  description?: ReactNode
+  action?: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn('flex flex-col items-center justify-center px-6 py-14 text-center', className)}>
+      {icon && (
+        <div className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-sunken text-forest-700 ring-1 ring-brass-300/50 ring-inset">
+          {icon}
+        </div>
+      )}
+      <p className="font-display-tight text-[20px] text-forest-950">{title}</p>
+      {description && <p className="mt-1.5 max-w-sm text-sm text-fg-3">{description}</p>}
+      {action && <div className="mt-5">{action}</div>}
+    </div>
+  )
+}
+
+export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-[var(--radius-card)] bg-claret-50 px-6 py-8 text-center text-sm text-claret-800">
+      <p>{message}</p>
+      {onRetry && (
+        <button onClick={onRetry} className="font-semibold text-claret-700 underline-offset-4 hover:underline">
+          Try again
+        </button>
+      )}
+    </div>
+  )
+}
+
+export function PageHeader({
+  title,
+  eyebrow,
+  subtitle,
+  actions,
+  children
+}: {
+  title: ReactNode
+  eyebrow?: ReactNode
+  subtitle?: ReactNode
+  actions?: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <div className="mb-6 flex flex-col gap-4 md:mb-10 md:gap-7">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          {eyebrow && <p className="eyebrow mb-3 md:mb-4">{eyebrow}</p>}
+          <h1 className="font-display-tight text-[32px] leading-[1.02] text-forest-950 md:text-[44px] md:leading-[0.98]">{title}</h1>
+          {subtitle && <p className="mt-2.5 max-w-2xl text-[14px] leading-relaxed text-fg-3 md:mt-3.5">{subtitle}</p>}
+        </div>
+        {actions && <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2.5">{actions}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+export function Segmented<V extends string>({
+  value,
+  onChange,
+  options,
+  size = 'md',
+  layoutId
+}: {
+  value: V
+  onChange: (v: V) => void
+  options: { value: V; label: ReactNode; count?: number }[]
+  size?: 'sm' | 'md'
+  layoutId: string
+}) {
+  return (
+    <div role="tablist" className="inline-flex max-w-full rounded-full bg-forest-950/[0.05] p-1 max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
+      {options.map((o) => {
+        const active = o.value === value
+        return (
+          <button
+            key={o.value}
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              'relative flex shrink-0 items-center gap-2 rounded-full font-semibold whitespace-nowrap transition-colors duration-200',
+              size === 'sm' ? 'h-7 px-3 text-xs max-md:h-8' : 'h-8 px-4 text-[13px] max-md:h-9',
+              active ? 'text-cream' : 'text-fg-3 hover:text-fg'
+            )}
+          >
+            {active && (
+              <motion.span
+                layoutId={layoutId}
+                className="absolute inset-0 z-0 rounded-full bg-forest-950 shadow-[var(--shadow-control)]"
+                transition={{ type: 'spring', stiffness: 520, damping: 40 }}
+              />
+            )}
+            <span className="relative z-[1]">{o.label}</span>
+            {o.count !== undefined && (
+              <span
+                className={cn(
+                  'relative z-[1] min-w-5 rounded-full px-1.5 text-center tabular text-[11px] leading-[18px]',
+                  active ? 'bg-cream/[0.16] text-cream' : 'bg-forest-950/[0.07] text-fg-3'
+                )}
+              >
+                {o.count}
+              </span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+export function Stat({
+  label,
+  value,
+  hint,
+  accent,
+  className
+}: {
+  label: ReactNode
+  value: ReactNode
+  hint?: ReactNode
+  accent?: string
+  className?: string
+}) {
+  return (
+    <div className={cn('card p-5 md:p-6', className)}>
+      <div className="flex items-center gap-2">
+        {accent && <span className={cn('size-2 rounded-full', accent)} />}
+        <span className="label">{label}</span>
+      </div>
+      <div className="mt-3.5 figure-display text-[26px] leading-none text-forest-950 md:text-[30px]">{value}</div>
+      {hint && <div className="mt-2 text-xs text-fg-3">{hint}</div>}
+    </div>
+  )
+}
+
+export function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="rounded-md bg-sunken px-1.5 py-0.5 shadow-[inset_0_-1px_0_rgb(10_31_20/0.1)] font-sans text-[11px] font-semibold text-fg-3">
+      {children}
+    </kbd>
+  )
+}
+
+/** Fades/slides page content in on route change. */
+export function Page({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className={cn('mx-auto w-full max-w-[1600px] px-4 pt-4 pb-10 sm:px-5 md:px-8 md:pt-6 md:pb-14 xl:px-10', className)}
+    >
+      {children}
+    </motion.div>
+  )
+}
