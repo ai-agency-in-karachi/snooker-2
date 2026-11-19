@@ -61,8 +61,10 @@ function productionHardening(): Plugin {
  */
 function offlineShell(): Plugin {
   const publicDir = resolve(__dirname, 'src/renderer/public')
+  // Cloudflare Pages reads _headers and _redirects at deploy time and never serves them.
+  const hostingConfig = new Set(['_headers', '_redirects'])
   const publicFiles = (dir: string): string[] =>
-    readdirSync(dir).flatMap((name) => {
+    readdirSync(dir).filter((name) => !hostingConfig.has(name)).flatMap((name) => {
       const full = join(dir, name)
       return statSync(full).isDirectory() ? publicFiles(full) : ['/' + relative(publicDir, full).split('\\').join('/')]
     })
