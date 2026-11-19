@@ -47,6 +47,12 @@ const SUPABASE_STUB = `
   grant select, insert, update, delete on storage.objects to authenticated;
   grant select on storage.buckets to anon, authenticated;
   grant execute on function storage.foldername(text) to anon, authenticated;
+
+  -- Supabase grants the API roles everything created in public by default; the
+  -- migrations must revoke what they do not mean to expose (0500, 1400, 2300).
+  alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
 `
 
 export type Role = 'admin' | 'staff'

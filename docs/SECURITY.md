@@ -110,6 +110,20 @@ Recommended in the Supabase dashboard (account settings, not code):
 - **Authentication → Policies:** a minimum password length of 8 or more, with letters and digits; turn on **leaked-password protection** if the plan offers it.
 - **Two-factor authentication** on the Supabase, Vercel and GitHub accounts, and a private GitHub repository.
 
+## Production hardening, 2026-11-19 (migration 2300)
+
+Every migration was applied to a PostgreSQL database carrying Supabase's own default privileges (new objects in `public` granted to `anon` / `authenticated`), then the API surface was audited from the catalog:
+
+| Area | Finding | Status |
+|---|---|---|
+| Sequences | `stock_adjustments_id_seq` (1400) kept USAGE / SELECT / UPDATE for `anon` and `authenticated` from Supabase's defaults | **Fixed** in 2300: no sequence privileges for the API roles |
+| Deactivated accounts | Could still read their own `app_users` row (every other policy required an active account) | **Fixed** in 2300 |
+| Tables | RLS on all 23 tables; every policy is `to authenticated`; `authenticated` holds SELECT only; `anon` nothing | ✔ |
+| Functions | 85 callable by `authenticated`, none by `anon`; all pin `search_path`; each refuses a login without an active profile, and every admin function refuses staff | ✔ |
+| Retention | The hourly job is scheduled again by 2300 if pg_cron was missing when 0700 ran | ✔ |
+
+`tests/db/api-surface.test.ts` sweeps every table, sequence, policy and function automatically, and the PGlite harness now carries Supabase's default privileges, so a future migration that forgets a revoke or a caller check fails the tests.
+
 ## Known limitations
 
 - Sale deletion and session cancellation are permission-gated. A void removes the invoice but is recorded on its counter shift (count and amount voided), and table sessions stay, marked *voided* / *cancelled*. A closed shift can never be changed. Grant these permissions only to trusted staff.
